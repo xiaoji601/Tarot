@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR 塔罗牌 (防卡死最终版)</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background-color: black; font-family: 'Arial', sans-serif; color: white; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        #video-input { display: none; }
+        
+        /* 状态栏 */
+        #status-bar {
+            position: absolute; top: 20px; left: 20px;
+            background: rgba(0, 0, 0, 0.6); padding: 15px;
+            border-radius: 8px; font-size: 20px; pointer-events: none;
+            border: 1px solid rgba(255,255,255,0.2); z-index: 10;
+        }
+        .instruction { font-size: 16px; color: #ffcc00; margin-top: 5px; }
+
+        /* 统一弹窗样式 */
+        .modal-style {
+            background: rgba(46, 30, 62, 0.98); /* 深紫背景 */
+            border: 2px solid #daa520; /* 金色边框 */
+            border-radius: 15px;
+            box-shadow: 0 0 30px rgba(218, 165, 32, 0.3);
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            display: block; 
+            color: #eee;
+            /* [修复] 强制开启GPU加速，防止卡顿 */
+            transform: translate(-50%, -50%) translateZ(0);
+            will-change: transform, opacity;
+        }
+
+        /* 提问对话框 */
+        #question-modal {
+            display: none; 
+            width: 33vw; 
+            padding: 30px; text-align: center; z-index: 100;
+        }
+        #question-modal h2 { margin-top: 0; color: #ffd700; }
+        #user-input {
+            width: 80%; padding: 10px; margin: 20px 0;
+            font-size: 16px; border-radius: 5px; border: 1px solid #555;
+            background: #eee; color: #000;
+        }
+        
+        /* 按钮通用样式 */
+        .btn {
+            padding: 10px 25px; font-size: 16px; cursor: pointer;
+            margin: 0 10px; border: none; border-radius: 5px;
+            transition: 0.3s;
+        }
+        .btn-confirm { background: #daa520; color: #000; font-weight: bold; }
+        .btn-confirm:hover { background: #ffdf00; }
+        .btn-skip { background: #555; color: white; }
+        .btn-skip:hover { background: #777; }
+        
+        /* [修复] 关闭按钮样式 */
+        .close-btn-manual {
+            position: absolute; top: 15px; right: 20px;
+            font-size: 24px; color: #daa520; cursor: pointer;
+            z-index: 101; font-weight: bold;
+            transition: 0.2s;
+        }
+        .close-btn-manual:hover { color: #fff; transform: scale(1.1); }
+
+        /* 聊天按钮样式 */
+        .btn-chat {
+            background: rgba(0, 0, 0, 0.6); 
+            border: 2px solid #daa520;      
+            color: #fff;                    
+            font-weight: bold;
+            margin-top: 20px; 
+            padding: 12px 35px;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: 0.3s;
+            display: inline-flex;           
+            align-items: center;
+            gap: 8px;                       
+            box-shadow: 0 0 15px rgba(218, 165, 32, 0.2);
+        }
+        .btn-chat:hover { 
+            background: rgba(218, 165, 32, 0.2); 
+            box-shadow: 0 0 25px rgba(218, 165, 32, 0.6);
+            transform: scale(1.05);
+        }
+
+        /* 文字颜色修复 */
+        #reading-content {
+            color: #ffffff; 
+            font-size: 16px;
+            line-height: 1.6;
+        }
+
+        /* 标题样式 */
+        .ai-title { 
+            color: #ffd700;           
+            font-size: 18px; 
+            margin-top: 25px;         
+            margin-bottom: 10px;      
+            font-weight: bold; 
+            border-left: 4px solid #ffd700; 
+            padding-left: 12px; 
+            display: block;           
+        }
+
+        /* 关键词高亮 */
+        .highlight-keyword { 
+            color: #ffd700; 
+            font-weight: bold; 
+            border-bottom: 1px dashed rgba(255, 215, 0, 0.5);
+        }
+
+        /* 解牌对话框 */
+        #reading-modal {
+            display: none;
+            width: 60vw; height: 80vh; 
+            padding: 20px; z-index: 100;
+            text-align: left;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        #reading-modal h2 { color: #ffd700; text-align: center; border-bottom: 1px solid #555; padding-bottom: 10px; margin-top: 0;}
+        
+        /* 视图容器 */
+        .view-container { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+        /* 滚动区域 */
+        #reading-scroll-area {
+            flex: 1; overflow-y: auto; padding-right: 10px;
+            scrollbar-width: thin; scrollbar-color: #daa520 #333;
+        }
+        #chat-history-area {
+            flex: 1; overflow-y: auto; padding: 10px; margin-bottom: 10px;
+            background: rgba(0,0,0,0.3); border-radius: 8px;
+            scrollbar-width: thin; scrollbar-color: #daa520 #333;
+        }
+
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #333; }
+        ::-webkit-scrollbar-thumb { background: #daa520; border-radius: 4px; }
+
+        /* AI文本块动画 */
+        .ai-text-block { animation: fadeIn 1s; }
+        
+        /* 聊天气泡 */
+        .chat-bubble { max-width: 80%; padding: 8px 12px; margin-bottom: 10px; border-radius: 8px; font-size: 15px; line-height: 1.4; word-wrap: break-word; }
+        .chat-user { background: #daa520; color: #000; align-self: flex-end; margin-left: auto; }
+        .chat-ai { background: rgba(255,255,255,0.1); color: #eee; align-self: flex-start; margin-right: auto; border: 1px solid #555; }
+        .chat-input-row { display: flex; gap: 10px; padding-top: 10px; border-top: 1px solid #555; }
+        #chat-input { flex: 1; padding: 10px; border-radius: 5px; border: 1px solid #555; background: #222; color: white; outline: none; }
+        #chat-input:focus { border-color: #daa520; }
+
+        @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+
+        #loading {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px; background: rgba(0,0,0,0.8);
+            padding: 30px; border-radius: 15px; text-align: center; z-index: 20;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loading">正在加载资源...<br>请确保 image 和 back 文件夹完整</div>
+    
+    <div id="status-bar">
+        <div><span id="state-text">初始化...</span></div>
+        <div id="instruction-text" class="instruction">等待摄像头启动</div>
+    </div>
+
+    <!-- 提问弹窗 -->
+    <div id="question-modal" class="modal-style">
+        <h2>🔮 命运指引</h2>
+        <p style="color: #ccc;">每一张牌都是潜意识的镜子。<br>在洗牌前，请在心中默念或输入你想问的问题。</p>
+        <input type="text" id="user-input" placeholder="例如：我的事业发展如何？" autocomplete="off">
+        <br>
+        <button class="btn btn-confirm" onclick="confirmQuestion()">确认提问</button>
+        <button class="btn btn-skip" onclick="skipQuestion()">跳过 (默念)</button>
+    </div>
+
+    <!-- 解牌弹窗 -->
+    <div id="reading-modal" class="modal-style">
+        <!-- [修复] 手动关闭按钮 -->
+        <div class="close-btn-manual" onclick="closeModalManual()">×</div>
+
+        <h2 id="modal-title">🌌 牌面启示</h2>
+        
+        <!-- 视图1：解牌报告 -->
+        <div id="report-view" class="view-container">
+            <div id="reading-scroll-area">
+                <div id="reading-content"></div>
+                <!-- 动态添加的聊聊按钮会出现在这里 -->
+            </div>
+            <p style="text-align: center; color: #888; margin-top: 10px; font-size: 14px;">
+                (比出手势 "2" 关闭 | 关闭后握拳重置)
+            </p>
+        </div>
+
+        <!-- 视图2：AI对话 -->
+        <div id="chat-view" class="view-container" style="display:none;">
+            <div id="chat-history-area"></div>
+            <div class="chat-input-row">
+                <input type="text" id="chat-input" placeholder="输入你的追问..." autocomplete="off">
+                <button class="btn btn-confirm" onclick="sendChatMessage()">发送</button>
+                <button class="btn btn-skip" onclick="showReportView()">返回</button>
+            </div>
+        </div>
+    </div>
+
+    <video id="video-input"></video>
+    <canvas id="output-canvas"></canvas>
+
+<script>
+    // --- 1. 基础配置 ---
+    const CARD_W = 80;
+    const CARD_H = 120;
+    
+    // --- 2. 塔罗牌数据 (完整) ---
+    const TAROT_DB = [
+        ["愚人", "新的开始，天真，冒险", "象征着无限的可能性和全新的旅程。现在是迈出第一步的好时机，不要被恐惧束缚。"],
+        ["魔术师", "创造力，能力，自信", "你拥有实现目标所需的所有资源和能力。只要集中注意力，你就能将想法变为现实。"],
+        ["女祭司", "直觉，神秘，潜意识", "向内寻找答案。你的直觉现在非常敏锐，有些事情尚未浮出水面，需要耐心等待。"],
+        ["皇后", "丰饶，母性，自然", "这是一个富足和创造力的时期。无论是感情还是物质，你都将迎来丰收和滋养。"],
+        ["皇帝", "权威，结构，领导力", "你需要建立秩序和规则。理性和自律将帮助你掌控当前的局面，实现稳定。"],
+        ["教皇", "传统，精神指引，信仰", "遵循传统或寻求长辈、导师的建议可能对你有帮助。现在不是打破常规的时候。"],
+        ["恋人", "爱，和谐，重要的选择", "这不仅仅关于爱情，也关乎价值观的选择。你需要听从内心的声音，做出和谐的决定。"],
+        ["战车", "意志力，胜利，决心", "尽管存在冲突或阻碍，但只要你保持坚定的意志和自控力，胜利终将属于你。"],
+        ["力量", "勇气，耐心，内在力量", "真正的力量来自于内心的柔韧而非蛮力。以柔克刚，用耐心和同理心去化解困难。"],
+        ["隐士", "反省，孤独，寻找真理", "这是一个需要独处的时刻。暂时从喧嚣中抽离，反思内心，你会在宁静中找到答案。"],
+        ["命运之轮", "改变，周期，机遇", "命运的齿轮正在转动，变化是不可避免的。顺应潮流，抓住转瞬即逝的机会。"],
+        ["正义", "公平，真理，法律", "种瓜得瓜，种豆得豆。现在需要客观、公正地看待问题，真相终将大白。"],
+        ["倒吊人", "牺牲，换个角度，等待", "事情可能暂时停滞不前。试着换一个角度看世界，或者做出一些必要的牺牲来换取新的视角。"],
+        ["死神", "结束，转变，重生", "不要害怕结束，这是新生的必经之路。旧的事物必须离去，才能为新的事物腾出空间。"],
+        ["节制", "平衡，适度，耐心", "寻找中庸之道。现在需要调和对立的力量，保持情绪的平衡和心态的平和。"],
+        ["恶魔", "束缚，诱惑，物质主义", "警惕过度的欲望或不健康的依赖关系。你可能被自己的执念所束缚，需要觉察并挣脱。"],
+        ["高塔", "突变，混乱，觉醒", "突如其来的变化可能会打破现有的结构。虽然痛苦，但这会让你从虚假的幻象中觉醒。"],
+        ["星星", "希望，灵感，宁静", "风暴过后，希望之星升起。保持乐观，你的愿望有机会实现，未来充满治愈的能量。"],
+        ["月亮", "幻觉，恐惧，潜意识", "事情可能不像表面看起来那样。此时充满了不确定性，要小心幻觉和欺骗，相信你的直觉。"],
+        ["太阳", "快乐，成功，活力", "阴霾散去，阳光普照。这是一张充满积极能量的牌，预示着成功、快乐和清晰的真相。"],
+        ["审判", "复活，觉醒，号召", "这是一个关键的转折点。过去的努力将得到评判，你将迎来一次重生或新的召唤。"],
+        ["世界", "圆满，完成，成就", "一个周期的完美结束。你已经完成了功课，即将享受成就带来的喜悦和圆满。"],
+        ["权杖王牌", "创造力，激情，新机会", "一个新的行动机会正在出现，充满了激情和动力。"],
+        ["权杖二", "计划，决定，展望", "你正在规划未来，需要做出一个决定，是维持现状还是迈向更广阔的世界。"],
+        ["权杖三", "扩张，远见，合作", "你的努力开始显现成果，眼光要放长远，可能涉及旅行或海外事务。"],
+        ["权杖四", "庆祝，和谐，归家", "一个阶段的成功，值得庆祝。这也代表着稳固的基础和家庭的欢乐。"],
+        ["权杖五", "冲突，竞争，挑战", "周围存在竞争或意见不合。但这是一种良性的摩擦，能激发你的斗志。"],
+        ["权杖六", "胜利，认可，自信", "你将获得众人的认可和赞赏，享受胜利的时刻，但不要骄傲。"],
+        ["权杖七", "防卫，坚持，挑战", "你处于有利位置，但面临挑战。坚持你的立场，不要轻易妥协。"],
+        ["权杖八", "速度，行动，消息", "事情进展得非常快，如果你在等待消息，它很快就会到来。"],
+        ["权杖九", "韧性，防御，坚持", "你已经很累了，但只差最后一步。保持警惕，坚持到底。"],
+        ["权杖十", "负担，责任，压力", "你承担了太多的责任。试着分担一些压力，否则你会被重担压垮。"],
+        ["权杖侍从", "探索，新消息，热情", "一个令人兴奋的新消息或新想法。保持好奇心，像孩子一样去探索。"],
+        ["权杖骑士", "行动，冒险，冲动", "现在的能量非常冲动和直接。迅速行动，但要小心不要鲁莽。"],
+        ["权杖王后", "自信，温暖，独立", "你是魅力四射的。用你的自信和热情去感染周围的人，主导局面。"],
+        ["权杖国王", "领导，视野，企业家", "这是一个成熟的领导者形象。要有宏观的视野，果断地采取行动。"],
+        ["圣杯王牌", "新感情，直觉，爱", "情感的源泉涌出。可能是一段新恋情，或者情感上的深刻满足。"],
+        ["圣杯二", "连接，伙伴，吸引力", "平等的伙伴关系。无论是恋人还是合作伙伴，你们之间有着深刻的共鸣。"],
+        ["圣杯三", "庆祝，友谊，社群", "与朋友欢聚的时刻。分享快乐，庆祝友谊，团队合作会很愉快。"],
+        ["圣杯四", "冷漠，沉思，错失", "你可能感到倦怠或不满足，容易忽略眼前出现的新机会。"],
+        ["圣杯五", "失落，悲伤，遗憾", "不要只盯着打翻的杯子哭泣，而忽略了身后还留着的希望。走出悲伤。"],
+        ["圣杯六", "回忆，怀旧，童年", "过去的人或事可能重新出现。这是一种单纯、美好的回忆或照顾。"],
+        ["圣杯七", "选择，幻想，迷茫", "面前有太多的选择，但很多可能只是幻影。需要看清现实，做出明智选择。"],
+        ["圣杯八", "放弃，寻找，离开", "你觉得现在的环境不再能满足你，决定离开去寻找更高层面的意义。"],
+        ["圣杯九", "满足，愿望成真", "这是一张许愿牌。当下的状态让你感到非常满足和快乐，享受生活。"],
+        ["圣杯十", "幸福，家庭，和谐", "情感的大圆满。家庭和睦，情感有着长久的支持和归属感。"],
+        ["圣杯侍从", "直觉，新消息，好奇", "可能会收到情感方面的信息，或者开始一段新的情感探索。"],
+        ["圣杯骑士", "浪漫，魅力，追求", "如同白马王子般的浪漫追求。跟随你的心，但要注意不要过于理想化。"],
+        ["圣杯王后", "同理心，关怀，直觉", "温柔、敏感且富有同理心。倾听你的直觉，关怀他人。"],
+        ["圣杯国王", "情绪平衡，宽容，外交", "成熟的情感控制力。在处理人际关系时，既宽容又理智。"],
+        ["宝剑王牌", "清晰，突破，真理", "思维的利剑斩断迷雾。一个新的想法或真相将带给你清晰的突破。"],
+        ["宝剑二", "僵局，逃避，抉择", "你在回避做出决定，但这导致了僵局。必须摘下眼罩，面对现实。"],
+        ["宝剑三", "心碎，悲伤，痛苦", "言语或真相带来的伤害。这是一种扎心的痛苦，但只有面对痛苦才能治愈。"],
+        ["宝剑四", "休息，恢复，沉思", "你需要停下来休息。现在的被动是为了将来更好的行动，不要急于求成。"],
+        ["宝剑五", "冲突，失败，背叛", "一场空洞的胜利。虽然赢了争执，但可能输了关系。注意不要为了赢而不择手段。"],
+        ["宝剑六", "过渡，治愈，离开", "正在慢慢离开困难的局面。虽然心情沉重，但你在驶向更平静的水域。"],
+        ["宝剑七", "策略，欺骗，隐藏", "可能需要用一些计谋或策略来解决问题。也要小心被他人欺骗。"],
+        ["宝剑八", "束缚，受困，无力", "很多束缚其实来自于你的思想。只要你愿意，你随时可以解开蒙眼布走出来。"],
+        ["宝剑九", "焦虑，噩梦，恐惧", "过度的焦虑让你夜不能寐。其实很多恐惧只是你的想象，并没有那么糟糕。"],
+        ["宝剑十", "痛苦结束，背叛，最低点", "最黑暗的时刻已经过去，因为不可能再坏了。黎明即将到来。"],
+        ["宝剑侍从", "好奇，观察，新想法", "思维敏捷，时刻警惕。可能会有一些八卦或新消息传来。"],
+        ["宝剑骑士", "急躁，行动，直接", "思维敏捷但行动急躁。要注意言辞，不要因为过于直接而伤人。"],
+        ["宝剑王后", "独立，敏锐，坦率", "理智且独立。用你的智慧和经验去判断，不要被情感左右。"],
+        ["宝剑国王", "理智，权威，公正", "专业的建议或权威的判断。用逻辑和原则来处理当下的问题。"],
+        ["星币王牌", "新机会，繁荣，稳定", "一个实实在在的新机会，涉及金钱、工作或健康。基础很稳固。"],
+        ["星币二", "平衡，适应，灵活性", "你需要同时处理多件事情。保持灵活性，在波动中寻找平衡。"],
+        ["星币三", "团队，技能，合作", "通过团队合作和专业技能来完成工作。你的能力会得到认可。"],
+        ["星币四", "控制，保守，占有", "你在紧紧抓住现有的资源，虽然安全，但也阻碍了新的流动。"],
+        ["星币五", "困难，孤立，贫穷", "物质或精神上的困顿。不要因为自尊而拒绝外界的帮助，有人愿意帮你。"],
+        ["星币六", "慷慨，分享，慈善", "施与受的平衡。如果你有能力，去帮助别人；如果你需要，去寻求帮助。"],
+        ["星币七", "评估，耐心，等待", "你已经努力耕耘了，现在需要耐心等待收获。停下来评估一下未来的方向。"],
+        ["星币八", "勤奋，细节，工艺", "专注于细节，磨练技艺。现在的努力是未来成功的基石。"],
+        ["星币九", "富足，独立，享受", "依靠自己的努力获得了优越的环境。享受你的劳动成果，自信而独立。"],
+        ["星币十", "遗产，家庭，长久", "家族的繁荣或长期的财富积累。这关乎传统、家庭和稳固的物质基础。"],
+        ["星币侍从", "专注，务实，新技能", "一个学习新技能的好机会。脚踏实地，一步一个脚印。"],
+        ["星币骑士", "勤奋，可靠，保守", "虽然进展缓慢，但非常可靠。坚持不懈地努力，最终会到达终点。"],
+        ["星币王后", "滋养，实际，舒适", "善于理财，懂得生活。在务实的同时，也照顾好自己和他人的需求。"],
+        ["星币国王", "财富，成功，可靠", "事业有成，物质丰富。这是一个成功的实业家形象，值得信赖。"]
+    ];
+
+    function getCardInfo(id) {
+        if (TAROT_DB[id]) return { name: TAROT_DB[id][0], meaning: TAROT_DB[id][1], detail: TAROT_DB[id][2] };
+        return { name: "未知牌", meaning: "未知能量", detail: "暂无详细解读。" };
+    }
+
+    // --- 3. 全局变量 ---
+    const videoElement = document.getElementById('video-input');
+    const canvasElement = document.getElementById('output-canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const stateText = document.getElementById('state-text');
+    const instructionText = document.getElementById('instruction-text');
+    const loadingDiv = document.getElementById('loading');
+    
+    // UI 元素
+    const questionModal = document.getElementById('question-modal');
+    const readingModal = document.getElementById('reading-modal');
+    const modalTitle = document.getElementById('modal-title');
+    const reportView = document.getElementById('report-view');
+    const chatView = document.getElementById('chat-view');
+    const readingContent = document.getElementById('reading-content');
+    const chatHistoryArea = document.getElementById('chat-history-area');
+    const userInput = document.getElementById('user-input');
+    const chatInput = document.getElementById('chat-input');
+
+    const STATES = {
+        WAITING_FOR_QUESTION: 'WAITING_FOR_QUESTION',
+        SHUFFLING: 'SHUFFLING',
+        GATHERED: 'GATHERED',
+        SPREAD: 'SPREAD',
+        REVEALED: 'REVEALED'
+    };
+
+    let currentState = STATES.WAITING_FOR_QUESTION;
+    let width, height;
+    let slots = [null, null, null]; 
+    let lastWristX = 0;
+    let handVelocity = 0;
+    let lastPinchTime = 0;
+    let revealTimer = 0; 
+    let resetTimer = 0;
+    let userQuestion = "";
+    
+    // 聊天上下文历史
+    let chatContext = [];
+
+    // ==========================================
+    // AI 核心配置
+    // ==========================================
+    const API_KEY = "sk-39f0b4ec2b30419baa364ed47bd85b26"; // <--- ⚠️⚠️ 请务必再次填入你的 Key ⚠️⚠️
+    const API_URL = "https://api.deepseek.com/chat/completions";
+
+    // --- 4. 业务逻辑 ---
+
+    // 1. 生成初始解牌报告
+    async function generateRichReading() {
+        let c1 = slots[0]; 
+        let c2 = slots[1]; 
+        let c3 = slots[2]; 
+        let q = userQuestion;
+
+        // 获取正逆位文本
+        const p1Name = c1.info.name + (c1.isReversed ? "(逆位)" : "(正位)");
+        const p2Name = c2.info.name + (c2.isReversed ? "(逆位)" : "(正位)");
+        const p3Name = c3.info.name + (c3.isReversed ? "(逆位)" : "(正位)");
+
+        // 初始化聊天上下文 (植入专家人设)
+        chatContext = [
+            { 
+                role: "system", 
+                content: `
+<role>
+你是一位心理学，精神分析学，占星学及塔罗牌方面的专家，你精通塔罗牌的含义，心理学和精神分析，并且能够结合提问者的问题{{problem}}给出合理的解释和建议。
+</role>
+<tasks>
+1.你将得到3张塔罗牌，这3张牌组成一个**时间流**。每张牌对应的含义如<meaning />所示。对于每张牌的描述均为{{ID}}-正位/逆位-{{card}}。其中{{ID}}为其在**时间流**中的位置，正位/逆位为塔罗牌的摆放方向，{{card}}为塔罗牌的牌面。
+<meaning>
+1.过去以及事件的根基（如起点、资源、内在动力）
+2.现在以及当前状态（进展、挑战、关键影响）
+3.未来以及潜在结果（若无干预的自然发展）
+</meaning>
+2.你将得到提问者的问题{{problem}}，你的所有回答都需要根据这个问题进行合理解释。
+3.你需要结合所有牌的内容，并根据这些内容，揭示事情发展的脉络。
+4.结合提问者的{{problem}}，对提问者的问题进行回答，并给出合理的建议。
+</tasks>
+<mbti>INFJ</mbti>
+<note>
+- 注意大小阿卡纳的协同效应。
+- 注意正逆位逻辑。
+- 融入占星元素（如牌面所代表的守护星和星座），结合星座知识解读宫位含义。
+- 塔罗揭示的是**可能性趋势**而非宿命。
+- 避免强化负面解读。
+- 将牌面符号与荣格原型理论结合。
+- 结合问卜者背景修正解读。
+- 你的回答要尽可能详细，给提问者更多的可能性。
+- 你的一切行动都要符合你的<mbti />，但不要向提问者透露你的<mbti />。
+- 除了<output />里的内容外，尽量不要输出其他内容。
+- 千万不要透露下一张牌的牌面。
+- 在用户提供文本后再进行回答。
+- 时间之流的本质是事件发展的线性关联，而非物理时间。
+- 注意牌的元素，几张牌的元素还需要组合解读。
+- 牌面所代表的元素和星座可能与提问者或相关任务的背景有关，对其进行解读。
+- 逆位牌可回推至上一张正位牌辅助解读（如星币四逆位->星币三正位）。对比过去与现在的逆位/正位状态，观察能量变化（如权杖六逆位->宝剑一正位：从自我怀疑到突破）。
+- 关注整体性与递进关系。过去->现在：分析事件的演变逻辑（如资源积累->当前瓶颈）。现在->未来：预测趋势（如当前行动是否导致理想结果）。若过去与未来矛盾（如过去为权杖ACE，未来为宝剑八），需关注中间环节的阻碍（如现在为星币国王逆位->资源浪费）。
+- 避免机械解读：不要强行将牌面套入“过去-现在-未来”，需结合问题本质灵活调整。
+</note>
+<knowledge>
+<minor_arcana>
+* 权杖(wand): 火元素|白羊座，狮子座，射手座|火星|战神玛尔斯/阿瑞斯
+* 圣杯(cup): 水元素|双鱼座，巨蟹座，天蝎座|月亮|月神狄安娜/阿尔忒弥斯
+* 宝剑(sword): 风元素|双子座，天秤座，水瓶座|水星|神使墨丘利/赫尔墨斯
+* 星币(pentacle): 土元素|金牛座，处女座，摩羯座|金星|爱与美之神维纳斯/阿芙洛狄忒
+* *数字牌**1-10通常代表着事物从开始到结束的发展过程
+* **宫廷牌**侍从-骑士-皇后-国王代表着人生的发展阶段
+</minor_arcana>
+<major_arcana>
+- 愚者(TheFool): 风|水瓶座|天王星|纯真者、探险家、新人、自由精神、直觉追随者
+- 魔术师(TheMagician): 风|水星|创造者、显化者、行动者、沟通者、掌握者
+- 女祭司(TheHighPriestess): 水|月亮|智慧的守护者、神秘主义者、直觉者、内在导师
+- 皇后(TheEmpress): 土|金星|母亲、创造者、滋养者、自然女神、丰产者
+- 皇帝(TheEmperor): 火|火星|白羊座|父亲、统治者、权威者、建造者、秩序的维护者
+- 教皇(TheHierophant): 土|金星|金牛座|导师、传统守护者、精神领袖、教育者、信仰的传播者
+- 恋人(TheLovers): 风|水星|双子座|选择者、结合者、关系构建者、爱人
+- 战车(TheChariot): 水|月亮|巨蟹座|战神阿瑞斯|胜利者、征服者、意志力驾驭者、自我实现者
+- 力量(Strength): 火|太阳|狮子座|大力神赫拉克勒斯|驯兽师、内在力量的掌握者、柔韧者
+- 隐士(TheHermit): 土|水星|处女座|智者、寻求者、孤独者、内在指引者
+- 命运之轮(WheelofFortune): 火|木星|命运的轮转者、机遇的捕捉者、变化的接受者
+- 正义(Justice): 风|金星|天秤座|法官、平衡者、真理的追求者
+- 倒吊人(TheHangedMan): 水|海王星|殉道者、牺牲者、新视角获取得
+- 死神(Death): 水|冥王星|天蝎座|转变者、结束者、凤凰
+- 节制(Temperance): 火|木星|射手座|炼金术士、平衡者、治疗者
+- 恶魔(TheDevil): 土|土星|摩羯座|阴影、诱惑者、囚禁者、解脱者
+- 高塔(TheTower): 火|火星|毁灭者、觉醒者、颠覆者
+- 星星(TheStar): 风|天王星|水瓶座|希望的给予者、灵感者、治疗者
+- 月亮(TheMoon): 水|海王星|双鱼座|潜意识的探索者、幻象者、梦想家
+- 太阳(TheSun): 火|太阳|启蒙者、喜悦者、成功者、真理的揭示者
+- 审判(Judgement): 水|冥王星|赫尔墨斯|觉醒者、重生者、自我评估
+- 世界(TheWorld): 土|土星|完成者、整合者、圆满者、宇宙舞者
+</major_arcana>
+<elements>
+* 火：行动力、热情、冲突
+* 水：情感、直觉、关系
+* 风：理性、思维、变革
+* 土：稳定、务实、结果
+——
+组合解读示例：
+1.三张牌均为土元素可能暗示事件缺乏动力或陷入僵局。
+2.火元素缺失可能预示行动力不足，需外部推动。
+3.水元素居多按时情感的流动。
+——
+元素与排的方位综合解读。如逆位火元素代表行动停止，逆位水元素代表情感的流动停止。
+</elements>
+<planets>
+* 太阳:内在自我与人格
+* 月亮:本能与自我需求
+* 水星:沟通和表达
+* 金星:个人魅力
+* 火星:行动与欲望
+* 木星:个人成长
+* 土星:局限性
+* 天王星:创造力
+* 海王星:包容性
+* 冥王星:黑暗面与潜力
+</planets>
+</knowledge>` 
+            }
+        ];
+
+        let loadingHTML = `
+            <div style="text-align:center; padding-top:50px;">
+                <div style="font-size:24px; color:#ffd700; margin-bottom:20px;">
+                    ✦ 正在链接宇宙意识...
+                </div>
+                <div style="font-size:14px; color:#ccc;">
+                    AI 塔罗师正在分析牌阵与问题<br>请耐心等待...
+                </div>
+            </div>`;
+        readingContent.innerHTML = loadingHTML;
+
+        // 构建提示词 (优化版：强制分段，防止颜色溢出)
+        const userPrompt = `
+<input>
+问题：{${q}}
+1-正位/逆位-{${p1Name}}
+2-正位/逆位-{${p2Name}}
+3-正位/逆位-{${p3Name}}
+</input>
+
+【排版绝对要求】：
+1. 不要使用 Markdown，直接输出 HTML。
+2. **标题格式**：每个阶段的标题（如“第一张牌”、“综合建议”等），必须用 <div class="ai-title">标题内容</div> 包裹。标题标签结束后必须换行。
+3. **正文格式**：标题下方的具体解读内容，必须用普通的文本或者 <p> 标签，**绝对不要**放在 div class="ai-title" 里面。
+4. **重点**：正文文字默认为白色，只有极少数关键术语用 <span class="highlight-keyword">关键词</span> 高亮。
+5. 保持段落清晰，不要大段堆砌。`;
+
+        try {
+            const response = await fetch(API_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
+                body: JSON.stringify({
+                    model: "deepseek-chat",
+                    messages: [
+                        chatContext[0], // system prompt
+                        { role: "user", content: userPrompt }
+                    ],
+                    temperature: 0.7
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.choices && data.choices[0].message) {
+                const aiText = data.choices[0].message.content;
+                // 显示报告 + 聊天按钮 (使用 Flex 居中)
+                readingContent.innerHTML = `
+                    <div class="ai-text-block">${aiText}</div>
+                    <div style="display:flex; justify-content:center; margin-top:30px;">
+                        <button class="btn btn-chat" onclick="showChatView()">✨ 或许你想聊聊...</button>
+                    </div>
+                `;
+                // 保存 AI 回复到历史
+                chatContext.push({ role: "user", content: userPrompt });
+                chatContext.push({ role: "assistant", content: aiText });
+            } else {
+                readingContent.innerHTML = `宇宙信号受到干扰，请重试。<br><br>错误详情: ${data.error ? data.error.message : '未知错误'}`;
+            }
+
+        } catch (error) {
+            console.error(error);
+            readingContent.innerHTML = `<div style="color:red; text-align:center;">连接失败。<br>请检查 API Key。<br>${error.message}</div>`;
+        }
+    }
+
+    // 2. 聊天功能：发送消息
+    async function sendChatMessage() {
+        const msg = chatInput.value.trim();
+        if (!msg) return;
+
+        // 添加用户消息到界面
+        appendMessage(msg, 'chat-user');
+        chatInput.value = ""; // 清空输入框
+        
+        // 添加到上下文
+        chatContext.push({ role: "user", content: msg });
+
+        // 显示“正在输入”
+        const loadingId = appendMessage("...", 'chat-ai');
+
+        try {
+            const response = await fetch(API_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${API_KEY}` },
+                body: JSON.stringify({
+                    model: "deepseek-chat",
+                    messages: chatContext,
+                    temperature: 0.7
+                })
+            });
+
+            const data = await response.json();
+            
+            // 移除 loading 消息
+            document.getElementById(loadingId).remove();
+
+            if (data.choices && data.choices[0].message) {
+                const aiReply = data.choices[0].message.content;
+                appendMessage(aiReply, 'chat-ai');
+                chatContext.push({ role: "assistant", content: aiReply });
+            }
+
+        } catch (error) {
+            appendMessage("连接中断，请重试。", 'chat-ai');
+        }
+    }
+
+    // 辅助：添加消息气泡
+    function appendMessage(text, className) {
+        const div = document.createElement('div');
+        div.className = `chat-bubble ${className}`;
+        div.id = 'msg-' + Date.now();
+        div.innerHTML = text; // 允许 HTML
+        chatHistoryArea.appendChild(div);
+        chatHistoryArea.scrollTop = chatHistoryArea.scrollHeight; // 滚动到底部
+        return div.id;
+    }
+
+    // 3. 视图切换逻辑
+    function showChatView() {
+        reportView.style.display = 'none';
+        chatView.style.display = 'flex';
+        modalTitle.innerText = "🔮 灵性对话";
+    }
+
+    function showReportView() {
+        chatView.style.display = 'none';
+        reportView.style.display = 'flex';
+        modalTitle.innerText = "🌌 牌面启示";
+    }
+
+    // 4. 手动关闭弹窗 (解决卡死)
+    function closeModalManual() {
+        readingModal.style.display = 'none';
+        // 不重置游戏，只关闭弹窗，允许用户看牌面
+    }
+
+    // --- 5. 游戏流程控制 ---
+
+    class Card {
+        constructor(id) {
+            this.id = id;
+            this.info = getCardInfo(id);
+            this.w = CARD_W; this.h = CARD_H;
+            this.x = Math.random() * (window.innerWidth - this.w);
+            this.y = Math.random() * (window.innerHeight - this.h);
+            this.vx = (Math.random() - 0.5) * 2; this.vy = (Math.random() - 0.5) * 2;
+            this.targetX = null; this.targetY = null;
+            this.isPicked = false; this.slotIndex = -1;
+            this.isFlipped = false; this.scaleX = 1; this.sizeRatio = 1;
+            
+            // 正逆位逻辑：50% 概率
+            this.isReversed = Math.random() < 0.5;
+
+            this.img = new Image(); this.img.src = `image/${id}.png`; this.imgLoaded = false;
+            this.img.onload = () => { this.imgLoaded = true; };
+            this.backImg = new Image(); this.backImg.src = `back/back.jpg`; this.backImgLoaded = false;
+            this.backImg.onload = () => { this.backImgLoaded = true; };
+        }
+        update(handSpeed) {
+            if (currentState === STATES.SHUFFLING) {
+                if (handSpeed > 0.02) { this.vx += (Math.random()-0.5)*handSpeed*300; this.vy += (Math.random()-0.5)*handSpeed*300; }
+                this.vx *= 0.95; this.vy *= 0.95;
+                this.x += this.vx; this.y += this.vy;
+                if (this.x < 0 || this.x > width - this.w) this.vx *= -1;
+                if (this.y < 0 || this.y > height - this.h) this.vy *= -1;
+                this.sizeRatio = 1;
+            } else if (currentState === STATES.GATHERED) {
+                this.targetX = width/2 - this.w/2; this.targetY = height/2 - this.h/2;
+                this.x += (this.targetX - this.x)*0.1; this.y += (this.targetY - this.y)*0.1;
+            } else if (currentState === STATES.SPREAD || currentState === STATES.REVEALED) {
+                if (!this.isPicked) {
+                    let totalW = width*0.9; let step = totalW/78; let startX = (width-totalW)/2; let offsetY = CARD_H/2;
+                    this.targetX = startX + this.id*step; this.targetY = height - 80 - (this.id%2)*10 - offsetY;
+                    this.x += (this.targetX - this.x)*0.05; this.y += (this.targetY - this.y)*0.05;
+                } else {
+                    let slotGap = 240; let centerX = width/2;
+                    let slotX = centerX + (this.slotIndex-1)*slotGap - (this.w/2);
+                    let slotY = height/2 - CARD_H*1.5;
+                    this.x += (slotX - this.x)*0.1; this.y += (slotY - this.y)*0.1;
+                    this.sizeRatio += (2.0 - this.sizeRatio)*0.1;
+                    if (this.isFlipped && this.scaleX > -1) this.scaleX -= 0.05;
+                }
+            }
+        }
+        draw(ctx) {
+            ctx.save();
+            let cx = this.x + this.w/2; let cy = this.y + this.h/2;
+            ctx.translate(cx, cy); 
+            
+            // 翻转逻辑 + 正逆位旋转
+            let rotation = 0;
+            if (this.scaleX < 0 && this.isReversed) {
+                rotation = Math.PI; // 180度
+            }
+            
+            ctx.scale(this.scaleX * this.sizeRatio, this.sizeRatio);
+            ctx.rotate(rotation);
+
+            if (this.scaleX < 0) {
+                ctx.scale(-1, 1);
+                if (this.imgLoaded) ctx.drawImage(this.img, -this.w/2, -this.h/2, this.w, this.h);
+                else { ctx.fillStyle="#FFF"; ctx.fillRect(-this.w/2,-this.h/2,this.w,this.h); }
+                ctx.lineWidth=2; ctx.strokeStyle="#daa520"; ctx.strokeRect(-this.w/2,-this.h/2,this.w,this.h);
+            } else {
+                if (this.backImgLoaded) ctx.drawImage(this.backImg, -this.w/2, -this.h/2, this.w, this.h);
+                else { ctx.fillStyle="#1a0b2e"; ctx.fillRect(-this.w/2,-this.h/2,this.w,this.h); }
+                ctx.strokeStyle="#555"; ctx.lineWidth=1; ctx.strokeRect(-this.w/2,-this.h/2,this.w,this.h);
+            }
+            ctx.restore();
+            
+            // 文字不随牌面旋转，保持正向
+            if (this.isFlipped && Math.abs(this.scaleX + 1) < 0.1) {
+                ctx.save(); ctx.fillStyle="#FFF"; ctx.shadowColor="black"; ctx.shadowBlur=4; ctx.textAlign="center";
+                let textY = cy + (this.h/2*this.sizeRatio) + 30;
+                let displayName = this.info.name + (this.isReversed ? " (逆位)" : "");
+                ctx.font="bold 24px Arial"; ctx.fillText(displayName, cx, textY);
+                ctx.font="18px Arial"; ctx.fillStyle="#ddd"; ctx.fillText(this.info.meaning, cx, textY+30);
+                ctx.restore();
+            }
+        }
+    }
+
+    const cards = []; for(let i=0; i<78; i++) cards.push(new Card(i));
+
+    function initGame() {
+        readingModal.style.display = 'none';
+        questionModal.style.display = 'block';
+        stateText.innerText = "状态: 等待提问";
+        instructionText.innerText = "请在屏幕中央的对话框输入你的问题";
+        userInput.value = "";
+        
+        showReportView();
+        chatHistoryArea.innerHTML = '<div class="chat-bubble chat-ai">你好，我是你的命运解读师。关于这组牌阵，你还有什么想深入探讨的吗？</div>';
+        chatContext = [];
+    }
+    function confirmQuestion() { userQuestion = userInput.value.trim() || "我的运势"; startShuffling(); }
+    function skipQuestion() { userQuestion = "心中的疑惑"; startShuffling(); }
+    function startShuffling() { questionModal.style.display = 'none'; currentState = STATES.SHUFFLING; stateText.innerText = "状态: 洗牌中"; }
+    function resetGame() {
+        currentState = STATES.WAITING_FOR_QUESTION; slots=[null,null,null];
+        cards.forEach(c => { 
+            c.isPicked=false; c.isFlipped=false; c.scaleX=1; c.sizeRatio=1; c.slotIndex=-1; 
+            c.x=Math.random()*width; c.y=Math.random()*height;
+            c.isReversed = Math.random() < 0.5;
+        });
+        initGame();
+    }
+
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5});
+    hands.onResults(onResults);
+    const camera = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 1280, height: 720 });
+    window.onload = () => { camera.start(); initGame(); };
+
+    function onResults(results) {
+        loadingDiv.style.display = 'none';
+        width = canvasElement.width = window.innerWidth; height = canvasElement.height = window.innerHeight;
+        canvasCtx.save(); canvasCtx.translate(width, 0); canvasCtx.scale(-1, 1);
+        canvasCtx.drawImage(results.image, 0, 0, width, height); canvasCtx.restore();
+        canvasCtx.fillStyle = 'rgba(5, 5, 10, 0.7)'; canvasCtx.fillRect(0, 0, width, height);
+        
+        if (currentState === STATES.WAITING_FOR_QUESTION) return;
+
+        let indexTip = null; let isPinching = false;
+        cards.forEach(card => { if (!card.isPicked) { card.update(handVelocity); card.draw(canvasCtx); } });
+        cards.forEach(card => { if (card.isPicked) { card.update(0); card.draw(canvasCtx); } });
+
+        // TRY-CATCH 包裹，防止手势识别报错卡死
+        try {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                const idxTipRaw = landmarks[8]; const thbTipRaw = landmarks[4];
+                indexTip = {x: (1 - idxTipRaw.x) * width, y: idxTipRaw.y * height};
+                let currWristX = (1 - landmarks[0].x); handVelocity = Math.abs(currWristX - lastWristX); lastWristX = currWristX;
+                let dist = Math.sqrt(Math.pow(idxTipRaw.x - thbTipRaw.x, 2) + Math.pow(idxTipRaw.y - thbTipRaw.y, 2));
+                isPinching = (dist < 0.03);
+
+                if (currentState === STATES.SHUFFLING) {
+                    instructionText.innerText = "动作: 挥手洗牌，满意后比出数字'1'聚牌";
+                    let idxUp = landmarks[8].y < landmarks[6].y; let midDown = landmarks[12].y > landmarks[10].y;
+                    if (idxUp && midDown && handVelocity < 0.01) { currentState = STATES.GATHERED; stateText.innerText = "状态: 聚台"; }
+                } else if (currentState === STATES.GATHERED) {
+                    instructionText.innerText = "动作: 比 '2' 展开矩阵";
+                    let idxOpen = landmarks[8].y < landmarks[6].y; let midOpen = landmarks[12].y < landmarks[10].y;
+                    let ringClosed = landmarks[16].y > landmarks[14].y; let pinkyClosed = landmarks[20].y > landmarks[18].y;
+                    if (idxOpen && midOpen && ringClosed && pinkyClosed) { currentState = STATES.SPREAD; stateText.innerText = "状态: 抽牌"; }
+                } else if (currentState === STATES.SPREAD) {
+                    let pickedCount = slots.filter(s => s !== null).length;
+                    if (pickedCount < 3) {
+                        instructionText.innerText = `动作: 食指捏合，抓取 ${3-pickedCount} 张塔罗牌`;
+                        canvasCtx.beginPath(); canvasCtx.arc(indexTip.x, indexTip.y, 8, 0, 2 * Math.PI);
+                        canvasCtx.fillStyle = "rgba(0, 255, 0, 0.8)"; canvasCtx.shadowBlur=10; canvasCtx.shadowColor="#0f0"; canvasCtx.fill(); canvasCtx.shadowBlur=0;
+                        if (isPinching && (Date.now() - lastPinchTime > 1000)) {
+                            lastPinchTime = Date.now(); let closest = null, minDist = 100;
+                            cards.forEach(card => {
+                                if (!card.isPicked) {
+                                    let d = Math.sqrt(Math.pow((card.x+card.w/2) - indexTip.x, 2) + Math.pow((card.y+card.h/2) - indexTip.y, 2));
+                                    if (d < minDist) { minDist = d; closest = card; }
+                                }
+                            });
+                            if (closest) { for(let i=0; i<3; i++) { if (slots[i] === null) { slots[i] = closest; closest.isPicked = true; closest.slotIndex = i; break; } } }
+                        }
+                    } else {
+                        instructionText.innerText = "动作: 手心朝屏幕保持3秒，以翻开命运";
+                        let isOpen = [8,12,16,20].every(id => landmarks[id].y < landmarks[id-2].y);
+                        if (isOpen) {
+                            revealTimer++; canvasCtx.beginPath(); canvasCtx.arc(width/2, height/2, 60, 0, 2 * Math.PI * (revealTimer/90));
+                            canvasCtx.strokeStyle = "#00d2ff"; canvasCtx.lineWidth = 5; canvasCtx.stroke();
+                        } else { revealTimer = 0; }
+                        if (revealTimer > 90) {
+                            currentState = STATES.REVEALED; stateText.innerText = "状态: 命运揭晓";
+                            slots.forEach(c => {if(c) c.isFlipped = true;}); generateRichReading(); revealTimer = 0;
+                        }
+                    }
+                } else if (currentState === STATES.REVEALED) {
+                    instructionText.innerText = "动作: 比 '1' 解读 | 比 '2' 关闭 | 握拳重置";
+                    let idxUp = landmarks[8].y < landmarks[6].y; let midDown = landmarks[12].y > landmarks[10].y;
+                    let midUp = landmarks[12].y < landmarks[10].y; let ringDown = landmarks[16].y > landmarks[14].y;
+                    
+                    if (idxUp && midDown && ringDown) {
+                        if(readingModal.style.display !== 'flex') {
+                            readingModal.style.display = 'flex';
+                            readingScrollArea.scrollTop = 0;
+                        }
+                    }
+                    if (idxUp && midUp && ringDown) {
+                        readingModal.style.display = 'none';
+                    }
+                    
+                    // 修改：仅当弹窗关闭时才允许握拳重置
+                    if (readingModal.style.display === 'none') {
+                        let isFist = [8,12,16,20].every(id => landmarks[id].y > landmarks[id-2].y);
+                        if (isFist) {
+                            resetTimer++; canvasCtx.beginPath(); canvasCtx.arc(width/2, height/2, 50, 0, 2 * Math.PI * (resetTimer/40));
+                            canvasCtx.strokeStyle = "#ff0055"; canvasCtx.lineWidth = 5; canvasCtx.stroke();
+                        } else { resetTimer = 0; }
+                        if (resetTimer > 40) { resetGame(); resetTimer = 0; }
+                    }
+                }
+                canvasCtx.save(); canvasCtx.translate(width, 0); canvasCtx.scale(-1, 1);
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#FFFF00', lineWidth: 2}); 
+                drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 3}); 
+                canvasCtx.restore();
+            }
+        } catch(e) {
+            console.error("Hand tracking error:", e);
+        }
+    }
+</script>
+</body>
+</html>
